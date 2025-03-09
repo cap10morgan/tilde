@@ -1,0 +1,313 @@
+#!/usr/bin/env bb
+
+(ns tilde
+  (:require [clojure.string :as str]))
+
+(require '[clojure.java.io :as io]
+         '[clojure.edn :as edn]
+         '[babashka.cli :as cli]
+         '[babashka.process :as process])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; utils
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- user-cfg-dir
+  []
+  (io/file (or (System/getenv "XDG_CONFIG_HOME")
+               (str (System/getProperty "user.home") "/.config"))))
+
+(defn- source-dir
+  []
+  (io/file (user-cfg-dir) "tilde"))
+
+(def output-dir user-cfg-dir)
+
+(defn- filename-extension
+  [file]
+  (let [filename (.getName file)
+        idx      (.lastIndexOf filename ".")]
+    (.substring filename (inc idx))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; shared plugin protocols
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprotocol CachedPluginConfig
+  "CachedPlugin implementers must implement the `get-plugin` method which should
+  load the plugin if it isn't already, but cache it and return that on subsequent
+  calls."
+  (plugin-config [this]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; input plugin protocol
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprotocol InputPlugin
+  "Input plugins must implement the following methods:
+  - `plugin-name`   returns a string with the plugin's name
+  - `latest-update` (must be FAST!) returns a timestamp of the last time this source was changed
+  - `rebuild`       reads the input source and returns a new config map."
+  (plugin-name [this])
+  (sources [this])
+  (latest-source-update [this source-key])
+  (rebuild [this source-key]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; builtin input plugins
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- sources->map
+  [sources]
+  (reduce (fn [sm s]
+            (let [contents   (delay (-> s slurp edn/read-string))
+                  source-key (-> s
+                                 .getName
+                                 (str/replace-first
+                                  (str "." (filename-extension s)) "")
+                                 keyword)]
+              (merge-with merge sm
+                          {source-key {:contents      contents
+                                       :last-modified (.lastModified s)}})))
+          {} sources))
+
+(defrecord InputPluginEdn
+  [source-dir sources]
+  InputPlugin
+  (plugin-name [_this] "edn")
+  (sources [this]
+    (if-let [s @(.-sources-atom this)]
+      s
+      (let [s (->> source-dir
+                   file-seq
+                   #_((fn [fs] (println "input plugin edn sources file-seq:"
+                                        (pr-str fs)) fs))
+                   (filter #(= (filename-extension %) "edn")))]
+        (reset! (.-sources-atom this) (sources->map s)))))
+  (latest-source-update [this source]
+    (println "input plugin" (str "'" (plugin-name this) "'")
+             "getting latest update timestamp for:" (pr-str source))
+    (:last-modified source))
+  (rebuild [this source]
+    (println "input plugin" (str "'" (plugin-name this) "'") "rebuilding:"
+             (pr-str source))
+    (-> source :contents deref)))
+
+(defn- load-exec-plugin-config
+  [executable]
+  (-> @(process/process {:out :string} executable "--config")
+      :out str/split-lines first edn/read))
+
+(defn- get-plugin-config
+  [plugin]
+  (if-let [cfg @(.-plugin-config plugin)]
+    cfg
+    (let [cfg (load-exec-plugin-config (io/file (.-config-dir plugin)
+                                                (.-path plugin)))]
+      (reset! (.-plugin-config plugin) cfg))))
+
+(defrecord InputPluginExecutable
+  [source-dir path plugin-config]
+  InputPlugin
+  (plugin-name [this] (-> this plugin-config :name))
+  (latest-source-update [this source-key]
+    (println "input plugin" (str "'" (plugin-name this) "'")
+             "getting latest update timestamp for:" (pr-str source-key))
+    true) ; TODO: Write me
+  (rebuild [this source]
+    (println "input plugin" (str "'" (plugin-name this) "'") "rebuilding:"
+             (pr-str source))
+    nil) ; TODO: Write me
+  CachedPluginConfig
+  (plugin-config [this] (get-plugin-config this)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; all input plugins
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def builtin-input-plugins
+  #{(map->InputPluginEdn {:source-dir (source-dir), :sources-atom (atom nil)})})
+
+(defn exec-plugin-path->input-plugin
+  [source-dir path]
+  (map->InputPluginExecutable {:source-dir    source-dir
+                               :path          path
+                               :sources-atom  (atom nil)
+                               :plugin-config (atom nil)}))
+
+(defn get-user-input-plugins
+  []
+  (let [cfg-dir        (source-dir)
+        ->input-plugin (partial exec-plugin-path->input-plugin source-dir)]
+    (-> cfg-dir
+        (io/file "plugins/input/")
+        file-seq
+        rest
+        (->> (map ->input-plugin)))))
+
+;; TODO: Consider other locations for plugins to live (e.g. system-wide)
+
+(defn get-all-input-plugins
+  []
+  (into builtin-input-plugins (get-user-input-plugins)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; output plugin protocol
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprotocol OutputPlugin
+  "Output plugins must implement a `write!` fn that writes the updated file(s)
+  based on the `cfg` config map. It MUST do this atomically."
+  (plugin-name [this])
+  (outputs [this])
+  (output-preamble [this])
+  (latest-output-update [this])
+  (write! [this dest-dir output-key cfg]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; builtin output plugins
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- cfg->git-cfg
+  ([cfg] (cfg->git-cfg cfg nil))
+  ([cfg section]
+   (reduce-kv
+    (fn [output k v]
+      (str output
+           (if (map? v)
+             (if section
+               (str "\n[" section " \"" (name k) "\"]\n"
+                    (cfg->git-cfg v nil))
+               (let [subsections (into {} (filter (fn [[_ v']] (map? v')) v))]
+                 (str
+                  (let [top-level (into {} (remove (fn [[k']]
+                                                     (contains? subsections k'))
+                                                   v))]
+                    (when (seq top-level)
+                      (str "\n[" (name k) "]\n"
+                           (cfg->git-cfg top-level nil))))
+                  (cfg->git-cfg subsections (name k)))))
+             (let [val (if (keyword? v) (name v) v)]
+               (keyword? v) (str "\t" (name k) " = " val "\n")))))
+    "" cfg)))
+
+(defrecord OutputPluginGit
+  []
+  OutputPlugin
+  (plugin-name [this] "git")
+  (outputs [this] {:git "git/config"})
+  (output-preamble [this] "# This config generated by tilde; DO NOT MODIFY")
+  (latest-output-update [this]
+    (println "output plugin" (str "'" (plugin-name this) "'")
+             "getting latest update timestamp of all outputs")
+    (or (->> this outputs (map :last-modified) (apply max)) 0))
+  (write! [this output-dir output-key cfg]
+    (let [git-config (str (output-preamble this) "\n" (cfg->git-cfg cfg) "\n")
+          dest (-> this outputs (get output-key) (->> (io/file output-dir)))]
+      (println "output plugin" (str "'" (plugin-name this) "'") "writing cfg:"
+               (pr-str cfg) "to" dest)
+      (io/make-parents dest)
+      (spit dest git-config))))
+
+(defrecord OutputPluginExecutable
+  [path]
+  OutputPlugin
+  (plugin-name [this] (-> this plugin-config :name))
+  (write! [this dest-dir output-key cfg]
+    (println "output plugin" (str "'" (plugin-name this) "'") "writing cfg:"
+             (pr-str cfg))
+    nil) ; TODO: Write me
+  CachedPluginConfig
+  (plugin-config [this] (get-plugin-config this)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; all output plugins
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def builtin-output-plugins
+  #{(->OutputPluginGit)})
+
+(defn exec-plugin->output-plugin
+  [config-dir path]
+  (map->OutputPluginExecutable {:config-dir config-dir
+                                :path       path}))
+
+(defn get-user-output-plugins
+  []
+  (-> (source-dir)
+      (io/file "plugins/output/")
+      file-seq
+      rest
+      (->> (map exec-plugin->output-plugin))))
+
+(defn get-all-output-plugins
+  []
+  (into builtin-output-plugins (get-user-output-plugins)))
+
+(defn output-plugin-for
+  [source]
+  (let [plugins (get-all-output-plugins)
+        plugin (some #(when (= (name source) (plugin-name %)) %) plugins)]
+    (if plugin plugin (println "unable to find output plugin for" source))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; outputs
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn write-outputs
+  [{:keys [dest-dir plugins cfg]}]
+  (doseq [plugin plugins]
+    (doseq [output-key (keys cfg)]
+      (write! plugin dest-dir output-key (get cfg output-key)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; inputs
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn refresh-all
+  [{:keys [output-dir]}]
+  (let [input-plugins  (get-all-input-plugins)]
+    (doseq [plugin input-plugins]
+        (let [plugin-sources (sources plugin)]
+          (println "plugin" (plugin-name plugin) "found sources:"
+                   (pr-str plugin-sources))
+          (doseq [[source-key source] plugin-sources]
+            (let [source-last-updated (latest-source-update plugin source)
+                  output-plugin (output-plugin-for source-key)]
+              (if (> source-last-updated (latest-output-update output-plugin))
+                (let [output (rebuild plugin source)]
+                  (write! output-plugin output-dir source-key output)))))))))
+
+(def cli-opts
+  {:output-dir {:default (output-dir)}
+   :source-dir {:default (source-dir)}})
+
+(defn -main
+  [opts]
+  (let [dest-dir (:dest-dir opts)
+        _        (println "tilde is rebuilding dotfiles in" dest-dir "...")]
+    (refresh-all opts)))
+
+(when (= *file* (System/getProperty "babashka.file"))
+  (-main (cli/parse-opts *command-line-args* {:spec cli-opts})))
