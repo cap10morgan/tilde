@@ -1,5 +1,6 @@
 (ns tilde.plugins.input.edn
-  (:require [tilde.fs :as fs]
+  (:require [tilde.log :as log]
+            [tilde.fs :as fs]
             [tilde.plugins.input :as input]))
 
 (defrecord InputPluginEdn
@@ -15,7 +16,7 @@
         (reset! (.-sources-atom this) (input/sources->map s)))))
   (latest-source-update [_this source] (:last-modified source))
   (rebuild [this source]
-    (println "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
+    (log/debug "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
              (pr-str source))
     (-> source :contents deref)))
 

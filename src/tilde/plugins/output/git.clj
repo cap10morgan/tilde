@@ -1,13 +1,14 @@
 (ns tilde.plugins.output.git
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [tilde.log :as log]
             [tilde.plugins.output :as output])
   (:import (java.io File)))
 
 (defn- ignore-cfg->git-ignore
   [plugin output-dir {:keys [ignore] :as cfg}]
   [(-> cfg
-       (assoc-in [(output/plugin-name plugin) :core :excludesFile]
+       (assoc-in [:core :excludesFile]
                  (str/join "/"
                            [output-dir (-> plugin output/output-files :ignore)]))
        (dissoc :ignore))
@@ -49,8 +50,8 @@
   (output-generators [this] (.-generators this))
   (output-preambles [this] (.-preambles this))
   (latest-output-update [this output-dir]
-    (println "output plugin" (str "'" (output/plugin-name this) "'")
-             "getting latest update timestamp of all outputs")
+    (log/debug "output plugin" (str "'" (output/plugin-name this) "'")
+               "getting latest update timestamp of all outputs")
     (let [xf (comp
               (map #(conj [output-dir] %))
               (map #(str/join "/" %))
@@ -74,14 +75,8 @@
                                    contents {}]
                               (let [preamble (or (get output-pres k)
                                                  (get output-pres ::all))
-                                    _        (println "getting generator for" k)
                                     generate (get output-gens k)
-                                    _        (println "got generator:" generate)
                                     [cfg out] (generate this output-dir cfg)
-                                    _        (println "generator returned new cfg:"
-                                                      (pr-str cfg))
-                                    _        (println "generator returned output:"
-                                                      (pr-str out))
                                     contents (assoc contents
                                                k (str (when preamble
                                                         (str preamble "\n"))

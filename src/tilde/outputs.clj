@@ -1,6 +1,7 @@
 (ns tilde.outputs
   (:require [clojure.java.io :as io]
             [tilde.cfg :as cfg]
+            [tilde.log :as log]
             [tilde.plugins.output :as output]
             [tilde.plugins.output.git :as git-plugin]
             [tilde.plugins.output.exec :as exec-plugin]))
@@ -30,4 +31,4 @@
   [source]
   (let [plugins (get-all-plugins)
         plugin (some #(when (= source (output/plugin-name %)) %) plugins)]
-    (if plugin plugin (println "WARN: unable to find output plugin for" source))))
+    (if plugin plugin (log/warn "unable to find output plugin for" source))))

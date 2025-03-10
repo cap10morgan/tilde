@@ -1,5 +1,6 @@
 (ns tilde.plugins.input.exec
-  (:require [tilde.plugins.input :as input]
+  (:require [tilde.log :as log]
+            [tilde.plugins.input :as input]
             [tilde.plugins.exec :as exec-plugin]
             [tilde.plugins.shared :as shared]))
 
@@ -8,12 +9,12 @@
   input/InputPlugin
   (plugin-name [this] (-> this plugin-config :name))
   (latest-source-update [this source-key]
-    (println "input plugin" (str "'" (input/plugin-name this) "'")
-             "getting latest update timestamp for:" (pr-str source-key))
+    (log/debug "input plugin" (str "'" (input/plugin-name this) "'")
+               "getting latest update timestamp for:" (pr-str source-key))
     true) ; TODO: Write me
   (rebuild [this source]
-    (println "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
-             (pr-str source))
+    (log/debug "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
+               (pr-str source))
     nil) ; TODO: Write me
   shared/CachedPluginConfig
   (plugin-config [this] (exec-plugin/get-plugin-config this)))
