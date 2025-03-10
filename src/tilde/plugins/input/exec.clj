@@ -1,7 +1,7 @@
 (ns tilde.plugins.input.exec
   (:require [tilde.plugins.input :as input]
             [tilde.plugins.exec :as exec-plugin]
-            [tilde.shared :as shared]))
+            [tilde.plugins.shared :as shared]))
 
 (defrecord InputPluginExecutable
   [source-dir path plugin-config]

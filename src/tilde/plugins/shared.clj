@@ -1,4 +1,4 @@
-(ns tilde.shared)
+(ns tilde.plugins.shared)
 
 (defprotocol CachedPluginConfig
   "CachedPlugin implementers must implement the `get-plugin` method which should

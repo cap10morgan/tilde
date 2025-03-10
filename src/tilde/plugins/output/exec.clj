@@ -1,7 +1,7 @@
 (ns tilde.plugins.output.exec
   (:require [tilde.plugins.output :as output]
             [tilde.plugins.exec :as exec]
-            [tilde.shared :as shared]))
+            [tilde.plugins.shared :as shared]))
 
 (defrecord OutputPluginExecutable
   [path]
