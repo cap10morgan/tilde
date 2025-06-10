@@ -23,4 +23,7 @@
 (def debug (partial log :debug))
 (def info (partial log :info))
 (def warn (partial log :warn))
-(def error (partial log :error))
+(defn error
+  [& args]
+  (if (instance? Throwable (first args))
+    (apply log :error (conj (-> args rest vec) "-" (.getMessage (first args))))))

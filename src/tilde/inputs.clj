@@ -1,24 +1,23 @@
 (ns tilde.inputs
   (:require [clojure.java.io :as io]
-            [tilde.plugins.input.edn :as edn-plugin]
             [tilde.plugins.input.exec :as exec-plugin]
+            [tilde.plugins.input.local-files :as lf-plugin]
             [tilde.cfg :as cfg]))
 
 (def builtin-plugins
-  #{(edn-plugin/new (cfg/source-dir))})
+  #{(lf-plugin/new cfg/source-dir)})
 
 (defn get-user-plugins
   []
-  (let [cfg-dir        (cfg/source-dir)
-        ->input-plugin (partial exec-plugin/path->input-plugin cfg/source-dir)]
-    (-> cfg-dir
-        (io/file "plugins/input/")
-        file-seq
-        rest
-        (->> (map ->input-plugin)))))
+  (-> cfg/source-dir
+      (io/file "plugins/input/")
+      file-seq
+      rest
+      (->> (map exec-plugin/new))))
 
 ;; TODO: Consider other locations for plugins to live (e.g. system-wide)
 
 (defn get-all-plugins
   []
-  (into builtin-plugins (get-user-plugins)))
+  (-> builtin-plugins
+      (into (get-user-plugins))))

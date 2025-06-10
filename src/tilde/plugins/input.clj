@@ -1,22 +1,28 @@
 (ns tilde.plugins.input
   (:require [clojure.string :as str]
-            [clojure.edn :as edn]
             [tilde.fs :as fs]))
 
 (defprotocol InputPlugin
   "Input plugins must implement the following methods:
-  - `plugin-name`   returns a string with the plugin's name
-  - `latest-update` (must be FAST!) returns a timestamp of the last time this source was changed
-  - `rebuild`       reads the input source and returns a new config map."
+  - `plugin-config`        returns a map with the plugin's configuration
+  - `plugin-name`          returns a string with the plugin's name
+  - `sources`              returns a seq of the sources this plugin cares about
+  - `latest-source-update` (must be FAST!) returns a timestamp of the last time this source was changed
+  - `read-source`          reads source and returns its EDN representation
+  - `rebuild`              reads the input source and returns a new config map
+  - `get-snippet`          returns snippet contents if plugin exports one by that name (optional)"
+  (plugin-config [this])
   (plugin-name [this])
   (sources [this])
-  (latest-source-update [this source-key])
-  (rebuild [this source-key]))
+  (latest-source-update [this source])
+  (read-source [this source-file])
+  (rebuild [this source-key])
+  (get-snippet [this snippet-name]))
 
 (defn sources->map
-  [sources]
+  [plugin sources]
   (reduce (fn [sm s]
-            (let [contents   (delay (-> s slurp edn/read-string))
+            (let [contents   (delay (read-source plugin s))
                   source-key (-> s
                                  .getName
                                  (str/replace-first

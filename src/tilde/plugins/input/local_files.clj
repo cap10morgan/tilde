@@ -1,9 +1,11 @@
-(ns tilde.plugins.input.edn
-  (:require [tilde.log :as log]
+(ns tilde.plugins.input.local-files
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [tilde.log :as log]
             [tilde.fs :as fs]
             [tilde.plugins.input :as input]))
 
-(defrecord InputPluginEdn
+(defrecord InputPluginLocalFiles
   [name source-dir sources]
   input/InputPlugin
   (plugin-name [this] (.-name this))
@@ -13,16 +15,21 @@
       (let [s (->> source-dir
                    file-seq
                    (filter #(= (fs/filename-extension %) "edn")))]
-        (reset! (.-sources-atom this) (input/sources->map s)))))
+        (reset! (.-sources-atom this) (input/sources->map this s)))))
   (latest-source-update [_this source] (:last-modified source))
+  (read-source [_this source-file] (->> source-file slurp
+                                        (edn/read-string
+                                         {:default *default-data-reader-fn*})))
   (rebuild [this source]
     (log/debug "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
              (pr-str source))
-    (-> source :contents deref)))
+    (-> source :contents deref))
+  (get-snippet [_this snippet-name]
+    (slurp (io/file source-dir (str snippet-name ".snippet")))))
 
 (defn new
   [source-dir]
-  (map->InputPluginEdn
-   {:name         :edn
+  (map->InputPluginLocalFiles
+   {:name         :local-files
     :source-dir   source-dir
     :sources-atom (atom nil)}))

@@ -1,18 +1,35 @@
 (ns tilde.plugins.exec
-  (:require [babashka.process :as process]
-            [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.string :as str]))
+  (:require [clojure.java.io :as io]
+            [tilde.log :as log]
+            [tilde.plugins.shared :as shared]))
 
-(defn load-exec-plugin-config
+(defn load
+  [executable args err-msg]
+  (try
+    (shared/read-edn-from-command executable args)
+    (catch RuntimeException e
+      (log/error e err-msg))))
+
+(defn load-sources
   [executable]
-  (-> @(process/process {:out :string} executable "--config")
-      :out str/split-lines first edn/read))
+  (load executable ["--sources"]
+        (str "Could not load sources from exec plugin " executable)))
+
+(defn- load-config
+  [executable]
+  (load executable ["--config"]
+        (str "Could not read config from exec plugin " executable)))
+
+(def config
+  (memoize load-config))
+
+(def sources
+  (memoize load-sources))
 
 (defn get-plugin-config
   [plugin]
-  (if-let [cfg @(.-plugin-config plugin)]
-    cfg
-    (let [cfg (load-exec-plugin-config (io/file (.-config-dir plugin)
-                                                (.-path plugin)))]
-      (reset! (.-plugin-config plugin) cfg))))
+  (config (.-path plugin)))
+
+(defn get-plugin-sources
+  [plugin]
+  (sources (.-path plugin)))

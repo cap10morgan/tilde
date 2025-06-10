@@ -1,11 +1,12 @@
 SOURCES := $(shell find src)
+
+target/tilde: $(SOURCES) bb.edn prelude
+	mkdir -p $(@D)
+	bb uberscript $@.uberscript -m tilde.main
+	cat prelude $@.uberscript > $@
+	chmod +x $@
+	rm $@.uberscript
+
 .PHONY: install
-
-tilde: $(SOURCES) bb.edn prelude
-	bb uberscript tilde.uberscript -m tilde.main
-	cat prelude tilde.uberscript > tilde
-	chmod +x tilde
-	rm tilde.uberscript
-
-install: tilde
-	cp ./tilde ~/bin/
+install: target/tilde
+	cp $< ~/bin/

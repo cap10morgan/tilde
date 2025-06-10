@@ -9,19 +9,13 @@
 (def builtin-output-plugins
   #{(git-plugin/new)})
 
-(defn exec-plugin->output-plugin
-  [config-dir path]
-  (exec-plugin/map->OutputPluginExecutable
-   {:config-dir config-dir
-    :path       path}))
-
 (defn get-user-output-plugins
   []
-  (-> (cfg/source-dir)
+  (-> cfg/source-dir
       (io/file "plugins/output/")
       file-seq
       rest
-      (->> (map exec-plugin->output-plugin))))
+      (->> (map exec-plugin/new))))
 
 (defn get-all-plugins
   []

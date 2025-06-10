@@ -1,28 +1,30 @@
 (ns tilde.plugins.input.exec
   (:require [tilde.log :as log]
+            [tilde.plugins.exec :as exec]
             [tilde.plugins.input :as input]
-            [tilde.plugins.exec :as exec-plugin]
             [tilde.plugins.shared :as shared]))
 
 (defrecord InputPluginExecutable
-  [source-dir path plugin-config]
+  [path]
   input/InputPlugin
-  (plugin-name [this] (-> this plugin-config :name))
-  (latest-source-update [this source-key]
+  ;; TODO: Cache this at some point if it's a good perf boost
+  (plugin-config [_this] (exec/load-config path))
+  (plugin-name [this] (-> this input/plugin-config :name))
+  ;; TODO: Rethink `sources` for exec plugins
+  (sources [this] ())
+  (latest-source-update [this source]
     (log/debug "input plugin" (str "'" (input/plugin-name this) "'")
-               "getting latest update timestamp for:" (pr-str source-key))
-    true) ; TODO: Write me
+               "getting latest update timestamp for:" (pr-str source))
+    (:last-modified source))
+  (read-source [this source-file] ())
   (rebuild [this source]
     (log/debug "input plugin" (str "'" (input/plugin-name this) "'") "rebuilding:"
                (pr-str source))
     nil) ; TODO: Write me
-  shared/CachedPluginConfig
-  (plugin-config [this] (exec-plugin/get-plugin-config this)))
+  (get-snippet [_this snippet-name]
+    (shared/stdout-from-command path ["--snippet" snippet-name])))
 
-(defn path->input-plugin
-  [source-dir path]
+(defn new
+  [path]
   (map->InputPluginExecutable
-   {:source-dir    source-dir
-    :path          path
-    :sources-atom  (atom nil)
-    :plugin-config (atom nil)}))
+   {:path path}))
